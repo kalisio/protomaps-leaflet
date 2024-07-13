@@ -1,7 +1,7 @@
 import Point from "@mapbox/point-geometry";
 import { Index } from "./labeler";
 import { PaintSymbolizer } from "./symbolizer";
-import { Bbox, Feature } from "./tilecache";
+import { Bbox, Feature, PickedFeature } from "./tilecache";
 import { PreparedTile, transformGeom } from "./view";
 
 export type Filter = (zoom: number, feature: Feature) => boolean;
@@ -26,6 +26,8 @@ export function paint(
   origin: Point,
   clip: boolean,
   debug?: string,
+  pointer?: Point,
+  pickedFeatures?: PickedFeature[]
 ) {
   const start = performance.now();
   ctx.save();
@@ -59,7 +61,7 @@ export function paint(
       }
 
       ctx.translate(po.x - origin.x, po.y - origin.y);
-
+      
       // TODO fix seams in static mode
       // if (clip) {
       //     // small fudge factor in static mode to fix seams
@@ -83,7 +85,8 @@ export function paint(
         if (ps !== 1) {
           geom = transformGeom(geom, ps, new Point(0, 0));
         }
-        rule.symbolizer.draw(ctx, geom, preparedTile.z, feature);
+        const pickedFeature = rule.symbolizer.draw(ctx, geom, preparedTile.z, feature, pointer);
+        if (pickedFeature && pickedFeatures) pickedFeatures.push({ feature: pickedFeature, layerName: rule.dataLayer })
       }
       ctx.restore();
     }

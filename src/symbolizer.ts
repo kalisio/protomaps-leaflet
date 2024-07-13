@@ -22,7 +22,8 @@ export interface PaintSymbolizer {
     geom: Point[][],
     z: number,
     feature: Feature,
-  ): void;
+    p?: Point
+  ): any;
 }
 
 export enum Justify {
@@ -119,6 +120,7 @@ export class PolygonSymbolizer implements PaintSymbolizer {
     geom: Point[][],
     z: number,
     f: Feature,
+    p?: Point
   ) {
     let doStroke = false;
     if (this.perFeature) {
@@ -278,10 +280,12 @@ export class LineSymbolizer implements PaintSymbolizer {
     geom: Point[][],
     z: number,
     f: Feature,
+    p?: Point
   ) {
     if (this.skip) return;
 
-    const strokePath = () => {
+    const strokePath = (path: Path2D) => {
+      let strokeWidth
       if (this.perFeature) {
         ctx.globalAlpha = this.opacity.get(z, f);
         ctx.lineCap = this.lineCap.get(z, f);
@@ -296,7 +300,8 @@ export class LineSymbolizer implements PaintSymbolizer {
         } else {
           ctx.setLineDash(this.dash.get(z));
         }
-        ctx.stroke();
+        ctx.stroke(path);
+        strokeWidth = ctx.lineWidth
         ctx.restore();
       } else {
         ctx.save();
@@ -304,20 +309,40 @@ export class LineSymbolizer implements PaintSymbolizer {
           ctx.lineWidth = this.width.get(z, f);
           ctx.strokeStyle = this.color.get(z, f);
         }
-        ctx.stroke();
+        ctx.stroke(path);
+        strokeWidth = ctx.lineWidth
         ctx.restore();
+      }
+      // Check against pointer ?
+      if (p) {
+        ctx.save();
+        ctx.lineWidth = strokeWidth
+        const picked = ctx.isPointInStroke(path, p.x, p.y)
+        ctx.restore();
+        if (!picked) return null
+        // TODO: manage highlight
+        ctx.save();
+        ctx.lineWidth = 8;
+        ctx.strokeStyle = 'yellow'
+        ctx.stroke(path);
+        ctx.restore();
+        return f
+      } else {
+        return null
       }
     };
 
-    ctx.beginPath();
+    //ctx.beginPath();
+    const path = new Path2D()
     for (const ls of geom) {
       for (let p = 0; p < ls.length; p++) {
         const pt = ls[p];
-        if (p === 0) ctx.moveTo(pt.x, pt.y);
-        else ctx.lineTo(pt.x, pt.y);
+        if (p === 0) path.moveTo(pt.x, pt.y);
+        else path.lineTo(pt.x, pt.y);
       }
     }
-    strokePath();
+    strokePath(path);
+    
   }
 }
 
@@ -394,6 +419,7 @@ export class CircleSymbolizer implements LabelSymbolizer, PaintSymbolizer {
     geom: Point[][],
     z: number,
     f: Feature,
+    p?: Point
   ) {
     ctx.globalAlpha = this.opacity.get(z, f);
 

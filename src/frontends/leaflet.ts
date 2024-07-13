@@ -29,6 +29,18 @@ type Status = {
   reason: Error;
 };
 
+type Pointer = {
+  // Local tile coordinates
+  x: number;
+  y: number;
+  // Tile
+  tileX: number;
+  tileY: number;
+  // Global map coordinates
+  X: number;
+  Y: number;
+};
+
 const reflect = (promise: Promise<Status>) => {
   return promise.then(
     (v) => {
@@ -176,8 +188,14 @@ const leafletLayer = (options: LeafletLayerOptions = {}): unknown => {
       if (element.key !== key) return;
       if (this.lastRequestedZ !== coords.z) return;
 
-      const buf = 16;
       const bbox = {
+        minX: 256 * coords.x,
+        minY: 256 * coords.y,
+        maxX: 256 * (coords.x + 1),
+        maxY: 256 * (coords.y + 1),
+      };
+      const buf = 16;
+      const bboxWithBuffer = {
         minX: 256 * coords.x - buf,
         minY: 256 * coords.y - buf,
         maxX: 256 * (coords.x + 1) + buf,
@@ -206,30 +224,63 @@ const leafletLayer = (options: LeafletLayerOptions = {}): unknown => {
 
       const paintRules = this.paintRules;
 
+      // We only check for pointer on the right tile
+      let pointer, pointerInTile
+      if (this.pointer) {
+        pointerInTile = (
+          (this.pointer.X >= bbox.minX) &&
+          (this.pointer.X <= bbox.maxX) &&
+          (this.pointer.Y <= bbox.maxY) &&
+          (this.pointer.Y >= bbox.minY)
+        )
+        if (pointerInTile) {
+          pointer = new Point(this.pointer.x, this.pointer.y)
+        }
+      }
+
       paintingTime = paint(
         ctx,
         coords.z,
         preparedTilemap,
         this.xray ? null : labelData,
         paintRules,
-        bbox,
+        bboxWithBuffer,
         origin,
         false,
         this.debug,
+        pointer,
+        this.pickedFeatures
       );
 
       if (this.debug) {
         ctx.save();
         ctx.fillStyle = this.debug;
         ctx.font = "600 12px sans-serif";
-        ctx.fillText(`${coords.z} ${coords.x} ${coords.y}`, 4, 14);
-
+        let ypos = 14;
+        ctx.fillText(`${coords.z} ${coords.x} ${coords.y}`, 4, ypos);
+        ypos += 14;
+        ctx.fillText(`[${bbox.minX.toFixed()},${bbox.minY.toFixed()},${bbox.maxX.toFixed()},${bbox.maxY.toFixed()}] bbox`, 4, ypos);
+        ypos += 14;
+        if (pointerInTile) {
+          ctx.fillText(`(${this.pointer.x.toFixed()},${this.pointer.y.toFixed()}) - (${this.pointer.tileX.toFixed()},${this.pointer.tileY.toFixed()}) - (${this.pointer.X.toFixed()},${this.pointer.Y.toFixed()}) pointer`, 4, ypos);
+          ypos += 14;
+        }
         ctx.font = "12px sans-serif";
-        let ypos = 28;
         for (const [k, v] of preparedTilemap) {
           const dt = v[0].dataTile;
+          const d = v[0].dim;
+          const o = v[0].origin;
           ctx.fillText(`${k + (k ? " " : "") + dt.z} ${dt.x} ${dt.y}`, 4, ypos);
           ypos += 14;
+          ctx.fillText(`[${o.x.toFixed()},${o.y.toFixed()},${(o.x+d).toFixed()},${(o.y+d).toFixed()}] bbox`, 4, ypos);
+          ypos += 14;
+          if (pointerInTile) {
+            const preparedTilePointer = new Point(
+              origin.x + this.pointer.x - o.x,
+              origin.y + this.pointer.y - o.y)
+            ctx.fillText(`(${preparedTilePointer.x.toFixed()},${preparedTilePointer.y.toFixed()}) - (${dt.x.toFixed()},${dt.y.toFixed()}) pointer`, 4, ypos);
+            ypos += 14;
+          }
         }
 
         ctx.font = "600 10px sans-serif";
@@ -240,7 +291,9 @@ const leafletLayer = (options: LeafletLayerOptions = {}): unknown => {
 
         if (layoutTime > 8) {
           ctx.fillText(`${layoutTime.toFixed()} ms layout`, 4, ypos);
+          ypos += 14;
         }
+        
         ctx.strokeStyle = this.debug;
 
         ctx.lineWidth = 0.5;
@@ -339,6 +392,69 @@ const leafletLayer = (options: LeafletLayerOptions = {}): unknown => {
         tile: tile.el,
         coords: this._keyToTileCoords(key),
       });
+    }
+
+    public _getPointer (event: any): Pointer {
+      const R = 6378137;
+      const MAX_LATITUDE = 85.0511287798;
+      const MAXCOORD = R * Math.PI;
+
+      const project = (latlng: number[]) => {
+        const d = Math.PI / 180;
+        const constrainedLat = Math.max(
+          Math.min(MAX_LATITUDE, latlng[0]),
+          -MAX_LATITUDE,
+        );
+        const sin = Math.sin(constrainedLat * d);
+        return new Point(
+          R * latlng[1] * d,
+          (R * Math.log((1 + sin) / (1 - sin))) / 2,
+        );
+      };
+      const projected = project([event.latlng.lat, event.latlng.lng]);
+      const normalized = new Point(
+        (projected.x + MAXCOORD) / (MAXCOORD * 2),
+        1 - (projected.y + MAXCOORD) / (MAXCOORD * 2),
+      );
+      if (normalized.x > 1)
+        normalized.x = normalized.x - Math.floor(normalized.x);
+      const onZoom = normalized.mult(1 << this._map.getZoom());
+      const tileX = Math.floor(onZoom.x);
+      const tileY = Math.floor(onZoom.y);
+      const x = (onZoom.x - tileX) * this.tileSize;
+      const y = (onZoom.y - tileY) * this.tileSize;
+      const X = tileX * this.tileSize + x;
+      const Y = tileY * this.tileSize + y;
+      return { x, y, tileX, tileY, X, Y }
+    }
+
+    public _onLayerClick (event: any) {
+      this.pointer = this._getPointer (event)
+      this.pickedFeatures = [];
+      // FIXME: we need to redraw to get picked features now
+      this.redraw();
+      // Check for intersected features
+      setTimeout(() => {
+        if (this.pickedFeatures.length) {
+          this.fire('click', Object.assign({}, event, { feature: this.pickedFeatures[0].feature }));
+        }
+        // Avoid checking again on next draw
+        this.pointer = null;
+      }, 1000);
+    }
+    
+    public onAdd (map: any) {
+      L.GridLayer.prototype.onAdd.call(this, map);
+      map.on({
+        click: this._onLayerClick
+      }, this);
+    }
+
+    public onRemove (map: any) {
+      L.GridLayer.prototype.onRemove.call(this, map);
+      map.off({
+        click: this._onLayerClick
+      }, this);
     }
   }
   return new LeafletLayer(options);
