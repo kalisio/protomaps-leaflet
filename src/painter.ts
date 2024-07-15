@@ -86,7 +86,9 @@ export function paint(
           geom = transformGeom(geom, ps, new Point(0, 0));
         }
         const pickedFeature = rule.symbolizer.draw(ctx, geom, preparedTile.z, feature, pointer);
-        if (pickedFeature && pickedFeatures) pickedFeatures.push({ feature: pickedFeature, layerName: rule.dataLayer })
+        if (pickedFeature && pickedFeatures) {
+          pickedFeatures.push({ feature: pickedFeature, layerName: rule.dataLayer })
+        }
       }
       ctx.restore();
     }

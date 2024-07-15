@@ -123,33 +123,60 @@ export class PolygonSymbolizer implements PaintSymbolizer {
     p?: Point
   ) {
     let doStroke = false;
+    let strokeWidth: number;
     if (this.perFeature) {
       ctx.globalAlpha = this.opacity.get(z, f);
       ctx.fillStyle = this.fill.get(z, f);
-      const width = this.width.get(z, f);
-      if (width) {
+      strokeWidth = this.width.get(z, f);
+      if (strokeWidth) {
         doStroke = true;
         ctx.strokeStyle = this.stroke.get(z, f);
-        ctx.lineWidth = width;
+        ctx.lineWidth = strokeWidth;
       }
     }
 
-    const drawPath = () => {
-      ctx.fill();
+    const drawPath = (path: Path2D) => {
+      ctx.fill(path);
       if (doStroke || this.doStroke) {
-        ctx.stroke();
+        ctx.stroke(path);
+      }
+
+      // Check against pointer ?
+      if (p) {
+        ctx.save();
+        ctx.lineWidth = strokeWidth
+        let picked = ctx.isPointInPath(path, p.x, p.y)
+        if (doStroke || this.doStroke) {
+          picked = picked || ctx.isPointInStroke(path, p.x, p.y)
+        }
+        ctx.restore();
+        if (!picked) return null
+        // TODO: manage highlight
+        ctx.save();
+        ctx.lineWidth = 8;
+        ctx.fillStyle = 'yellow'
+        ctx.strokeStyle = 'yellow'
+        ctx.fill(path);
+        if (doStroke || this.doStroke) {
+          ctx.stroke(path);
+        }
+        ctx.restore();
+        return f
+      } else {
+        return null
       }
     };
 
-    ctx.beginPath();
+    //ctx.beginPath();
+    const path = new Path2D()
     for (const poly of geom) {
       for (let p = 0; p < poly.length; p++) {
         const pt = poly[p];
-        if (p === 0) ctx.moveTo(pt.x, pt.y);
-        else ctx.lineTo(pt.x, pt.y);
+        if (p === 0) path.moveTo(pt.x, pt.y);
+        else path.lineTo(pt.x, pt.y);
       }
     }
-    drawPath();
+    return drawPath(path);
   }
 }
 
@@ -341,8 +368,7 @@ export class LineSymbolizer implements PaintSymbolizer {
         else path.lineTo(pt.x, pt.y);
       }
     }
-    strokePath(path);
-    
+    return strokePath(path);
   }
 }
 
